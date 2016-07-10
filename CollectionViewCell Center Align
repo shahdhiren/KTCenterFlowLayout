@@ -1,0 +1,168 @@
+//
+//  KTCenterFlowLayout.swift
+//  CollectionViewCellCenterAlign
+//
+//  Created by Dhiren Shah on 10/07/16.
+//  Copyright © 2016 mTekWorld. All rights reserved.
+//
+
+import UIKit
+
+/**
+ * Aligns cells to the center of a collection view.
+ */
+class KTCenterFlowLayout: UICollectionViewFlowLayout {
+    
+    var attrCache: NSMutableDictionary?
+    
+    override func prepareLayout() {
+        self.attrCache = NSMutableDictionary()
+    }
+    
+    override func layoutAttributesForElementsInRect(rect: CGRect) -> [UICollectionViewLayoutAttributes]? {
+        
+        let updatedAttributes = NSMutableArray()
+        
+        let sections = self.collectionView?.numberOfSections()
+        var s = 0
+        
+        while s < sections {
+            let rows = self.collectionView?.numberOfItemsInSection(s)
+            var r = 0
+            
+            while r < rows {
+                let indexPath = NSIndexPath(forRow: r, inSection: s)
+                let attrs = self.layoutAttributesForItemAtIndexPath(indexPath)
+                
+                if CGRectIntersectsRect((attrs?.frame)!, rect) {
+                    updatedAttributes.addObject(attrs!)
+                }
+                
+                let headerAttrs = super.layoutAttributesForSupplementaryViewOfKind(UICollectionElementKindSectionHeader, atIndexPath: indexPath)
+                
+                if (headerAttrs != nil) && CGRectIntersectsRect((headerAttrs?.frame)!, rect) {
+                    updatedAttributes.addObject(headerAttrs!)
+                }
+                
+                let footerAttrs = super.layoutAttributesForSupplementaryViewOfKind(UICollectionElementKindSectionFooter, atIndexPath: indexPath)
+                
+                if (footerAttrs != nil) && CGRectIntersectsRect((footerAttrs?.frame)!, rect) {
+                    updatedAttributes.addObject(footerAttrs!)
+                }
+                
+                r += 1
+            }
+            s += 1
+        }
+        
+        return updatedAttributes as NSArray as? [UICollectionViewLayoutAttributes]
+    }
+    
+    override func layoutAttributesForItemAtIndexPath(indexPath: NSIndexPath) -> UICollectionViewLayoutAttributes? {
+        
+        if self.attrCache![indexPath] != nil {
+            return self.attrCache![indexPath] as? UICollectionViewLayoutAttributes
+        }
+        
+        // Find the other items in the same "row"
+        let rowBuddies = NSMutableArray()
+        
+        // Calculate the available width to center stuff within
+        // sectionInset is NOT applicable here because a) we're centering stuff
+        // and b) Flow layout has arranged the cells to respect the inset. We're
+        // just hijacking the X position.
+        let collectionViewWidth = CGRectGetWidth(self.collectionView!.bounds) - self.collectionView!.contentInset.left - self.collectionView!.contentInset.right
+        
+        // To find other items in the "row", we need a rect to check intersects against.
+        // Take the item attributes frame (from vanilla flow layout), and stretch it out
+        var rowTestFrame = super.layoutAttributesForItemAtIndexPath(indexPath)?.frame
+        rowTestFrame?.origin.x = 0
+        rowTestFrame?.size.width = collectionViewWidth
+        
+        let totalRows = self.collectionView?.numberOfItemsInSection(indexPath.section)
+        
+        // From this item, work backwards to find the first item in the row
+        // Decrement the row index until a) we get to 0, b) we reach a previous row
+        var rowStartIDX = indexPath.row
+        
+        while true {
+            let prevIDX = rowStartIDX - 1
+            if prevIDX < 0 {
+                break
+            }
+            let prevPath = NSIndexPath(forRow: prevIDX, inSection: indexPath.section)
+            let prevFrame = super.layoutAttributesForItemAtIndexPath(prevPath)?.frame
+            
+            // If the item intersects the test frame, it's in the same row
+            if CGRectIntersectsRect(prevFrame!, rowTestFrame!) {
+                rowStartIDX = prevIDX
+            } else { // Found previous row, escape!
+                break
+            }
+        }
+        
+        // Now, work back UP to find the last item in the row
+        // For each item in the row, add it's attributes to rowBuddies
+        var buddyIDX = rowStartIDX
+        while true {
+            if buddyIDX > totalRows!-1 {
+                break
+            }
+            
+            let buddyPath = NSIndexPath(forRow: buddyIDX, inSection: indexPath.section)
+            
+            let buddyAttributes = super.layoutAttributesForItemAtIndexPath(buddyPath)
+            if CGRectIntersectsRect(buddyAttributes!.frame, rowTestFrame!) {
+                // If the item intersects the test frame, it's in the same row
+                rowBuddies.addObject(buddyAttributes!.copy())
+                buddyIDX += 1
+            } else {
+                // Encountered next row
+                break
+            }
+        }
+        
+        let flowDelegate: UICollectionViewDelegateFlowLayout? = self.collectionView?.delegate as? UICollectionViewDelegateFlowLayout
+        
+        // x-x-x-x ... sum up the interim space
+        var interitemSpacing = self.minimumInteritemSpacing
+        
+        if flowDelegate != nil && rowBuddies.count > 0 {
+            interitemSpacing = flowDelegate!.collectionView!(self.collectionView!, layout: self, minimumInteritemSpacingForSectionAtIndex: indexPath.section)
+        }
+        
+        let aggregateInteritemSpacing = interitemSpacing * CGFloat(rowBuddies.count - 1)
+        
+        // Sum the width of all elements in the row
+        var aggregateItemWidths: CGFloat = 0.0
+        for itemAttributes in rowBuddies {
+            aggregateItemWidths += CGRectGetWidth(itemAttributes.frame)
+        }
+        
+        // Build an alignment rect
+        // |  |x-x-x-x|  |
+        let alignmentWidth = aggregateItemWidths + aggregateInteritemSpacing
+        let alignmentXOffset = (collectionViewWidth - alignmentWidth) / 2.0
+        
+        // Adjust each item's position to be centered
+        var previousFrame = CGRectZero
+        for i in 0..<rowBuddies.count {
+            let itemAttributes: UICollectionViewLayoutAttributes = rowBuddies[i] as! UICollectionViewLayoutAttributes
+            var itemFrame = itemAttributes.frame
+            
+            if CGRectEqualToRect(previousFrame, CGRectZero) {
+                itemFrame.origin.x = alignmentXOffset
+            } else {
+                itemFrame.origin.x =  CGRectGetMaxX(previousFrame) + interitemSpacing
+            }
+            
+            itemAttributes.frame = itemFrame
+            previousFrame = itemFrame
+            
+            // Finally, add it to the cache
+            self.attrCache![itemAttributes.indexPath] = itemAttributes
+        }
+        
+        return self.attrCache![indexPath] as? UICollectionViewLayoutAttributes
+    }
+}
